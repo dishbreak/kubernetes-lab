@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: api
-        image: value-api:v1
+        image: value-api:v2
         resources:
           limits:
             memory: "128Mi"
@@ -22,3 +22,6 @@ spec:
         ports:
         - containerPort: 8080
         imagePullPolicy: IfNotPresent
+        env:
+          - name: USE_REDIS_BACKEND
+            value: "1"
