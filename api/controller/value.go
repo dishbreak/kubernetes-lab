@@ -7,6 +7,9 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
+
+	"github.com/go-redis/redis/v9"
 )
 
 type ValueService interface {
@@ -58,6 +61,18 @@ func NewValueControllerDummy() *ValueController {
 	}
 }
 
+func NewValueControllerRedis() *ValueController {
+	return &ValueController{
+		ValueService: &redisValueService{
+			rc: redis.NewClient(&redis.Options{
+				Addr:     "redis:6379",
+				DB:       0,
+				Password: "",
+			}),
+		},
+	}
+}
+
 type dummyValueService struct {
 	val int
 }
@@ -69,4 +84,25 @@ func (v *dummyValueService) GetValue(ctx context.Context) (int, error) {
 func (v *dummyValueService) SetValue(ctx context.Context, value int) error {
 	v.val = value
 	return nil
+}
+
+type redisValueService struct {
+	rc *redis.Client
+}
+
+const (
+	valueKey = "my-value"
+)
+
+func (v *redisValueService) GetValue(ctx context.Context) (int, error) {
+	status := v.rc.Get(ctx, valueKey)
+	if err := status.Err(); err != nil {
+		return -1, err
+	}
+	return status.Int()
+}
+
+func (v *redisValueService) SetValue(ctx context.Context, value int) error {
+	status := v.rc.Set(ctx, valueKey, value, time.Duration(0))
+	return status.Err()
 }
