@@ -192,4 +192,22 @@ $ curl localhost:31000/value
 457
 ```
 
-Nice! We've got the same behavior that we saw locally, but inside our cluster.
+Nice! We've got the same behavior that we saw locally, but inside our cluster. Now let's 
+
+# Step 5: Add Redis backing
+
+There's a small problem with our service. To demonstrate, let's use the `rollout` command.
+
+```shell
+$ kubectl rollout restart deployment api --namespace=value
+deployment.apps/api restarted
+```
+
+Don't let the `restart` fool you. What's happening here is the deployment is killing and replacing the pod with a brand new one. Try getting the value again, and you'll see an effect of this:
+
+```shell
+$ curl localhost:31000/value                              
+0
+```
+
+Hm. The value we POSTed back in Step 4 is gone! That's because the value lived in memory within the pod that we just terminated. The value is gone with that pod. If we're going to want to keep our value, we'll need to persist it somewhere.
