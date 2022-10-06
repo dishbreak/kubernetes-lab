@@ -66,7 +66,7 @@ Check out the source code in `api/`. It might be hard to parse if you don't know
 Let's try it out. Run the `docker build` command in the `api/` directory.
 
 ```shell
-$ docker build -t value-service:v1
+$ docker build -t value-api:v1
 ```
 
 It'll take a minute to download everything. When it's done, go ahead and execute it.
