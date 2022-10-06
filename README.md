@@ -211,3 +211,74 @@ $ curl localhost:31000/value
 ```
 
 Hm. The value we POSTed back in Step 4 is gone! That's because the value lived in memory within the pod that we just terminated. The value is gone with that pod. If we're going to want to keep our value, we'll need to persist it somewhere.
+
+Let's step forward in time, and deploy a Redis service that will handle persisting data for us.
+
+```shell
+$ git checkout 2-using-redis-backend
+```
+
+Your repo now has a `redis/` directory. This directory has YAML files but no source code, because it's relying on the public redis docker image. Take a look at the files, and then apply them to the kubernetes cluster. 
+
+```shell
+$ kubectl apply -f ./redis
+deployment.apps/redis created
+service/redis created
+```
+
+Your API service got an upgrade, too! It now can store the value in Redis instead of keeping it memory. Check out `api/controller/value.go` to see the details on that. In the `api/` directory, run `docker build` to create a new container image.
+
+```shell
+$ docker build -t value-api:v2 .
+```
+
+This build should go much faster than the first one, since most of the image layers are cached.
+
+Finally, check out `api/deployment.yml`. You should see a new piece of config in there:
+
+```yml
+        env:
+          - name: USE_REDIS_BACKEND
+            value: "1"
+```
+
+This sets the `USE_REDIS_BACKEND` environment variable in your container, which configures the API to use a Redis client to store and retrieve the data. Go ahead and apply the file against your cluster.
+
+```shell
+$ kubectl apply -f api/deployment.yml
+deployment.apps/api configured
+```
+
+Now, let's try the same sequence again: POST a value, GET the value, restart the pod, and GET the value again.
+
+```shell
+$ curl -X POST localhost:31000/value -d 457
+
+$ curl localhost:31000/value               
+457                                                                                                                                                                                             
+$ kubectl rollout restart deployment api --namespace=value
+deployment.apps/api restarted
+
+$ curl localhost:31000/value                              
+457
+```
+
+Woo! The value persisted thru the restart. Awesome.
+
+For extra fun, let's run some commands inside the redis cluster and see if we have the data there. First, let's find the pod running redis.
+
+```shell
+$ kubectl get pods --namespace=value
+NAME                     READY   STATUS    RESTARTS   AGE
+api-6bc69489d-fjzbz      1/1     Running   0          3m28s
+redis-84d6945f5c-qwgj5   1/1     Running   0          14m
+```
+
+Now I'll use `exec` to drop into a shell in the redis pod.
+
+```shell
+$ kubectl exec -it redis-84d6945f5c-qwgj5 --namespace=value -- sh
+# redis-cli
+127.0.0.1:6379> get my-value
+"457"
+```
