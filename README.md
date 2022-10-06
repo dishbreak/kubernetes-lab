@@ -135,10 +135,61 @@ Uhhh...what? We just created it, right? Where is it? Remember that we created th
 
 ```
 $ kubectl get deployments --namespace=value
-kubectl get deployments --namespace=value    
 NAME   READY   UP-TO-DATE   AVAILABLE   AGE
 api    1/1     1            1           24m
 ```
 
 Of course, your `AGE` value may differ, but there it is! One pod, ready and available for value-add goodness. But, um...how are we going to reach it?
 
+
+# Step 4: Create a Service
+
+Deployments are essential, we need them to ensue that the cluster is running pods with our desired container image and config. But if we want to form a network connection to them, we'll need to set up a Kubernetes [Service](https://kubernetes.io/docs/concepts/services-networking/service). Per the docs:
+
+> In Kubernetes, a Service is an abstraction which defines a logical set of Pods and a policy by which to access them (sometimes this pattern is called a micro-service). The set of Pods targeted by a Service is usually determined by a selector. 
+
+Specifically, we'll use a service to make our API reachable outside the cluster. We've defined an api service in `api/service.yml`. Take a look, and note the following:
+
+* The service is in the `value` namespace (line 5)
+* The service is a `NodePort` service -- more on this later (line 7)
+* The service selects pods tagged with the label `app: api` (lines 8-9)
+* The service routes traffic sent to the node on port 31000 to the container's port 31000
+
+The selector is crucial here. It lets us make the pods that our deployment creates turn into endpoints for our service.
+
+Let's deploy it, and then describe the service.
+
+```shell
+$ kubectl apply -f api/service.yml  
+service/api created
+
+$ kubectl describe service api --namespace=value
+Name:                     api
+Namespace:                value
+Labels:                   <none>
+Annotations:              <none>
+Selector:                 app=api
+Type:                     NodePort
+IP Family Policy:         SingleStack
+IP Families:              IPv4
+IP:                       10.110.233.21
+IPs:                      10.110.233.21
+LoadBalancer Ingress:     localhost
+Port:                     traffic  8080/TCP
+TargetPort:               8080/TCP
+NodePort:                 traffic  31000/TCP
+Endpoints:                10.1.0.18:8080
+Session Affinity:         None
+External Traffic Policy:  Cluster
+Events:                   <none>
+```
+
+Awesome! The `Endpoints` shows the Pod IP address for the pod we created with our deployment. Now, let's see if we can visit the service.
+
+```shell
+$ curl -X POST localhost:31000/value -d 457
+$ curl localhost:31000/value
+457
+```
+
+Nice! We've got the same behavior that we saw locally, but inside our cluster.
