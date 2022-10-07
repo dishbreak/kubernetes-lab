@@ -274,7 +274,7 @@ api-6bc69489d-fjzbz      1/1     Running   0          3m28s
 redis-84d6945f5c-qwgj5   1/1     Running   0          14m
 ```
 
-Now I'll use `exec` to drop into a shell in the redis pod.
+Now I'll use `exec` to drop into an interactive `redis-cli` session in the redis pod.
 
 ```shell
 $ kubectl exec -it redis-84d6945f5c-qwgj5 --namespace=value -- sh
@@ -282,3 +282,134 @@ $ kubectl exec -it redis-84d6945f5c-qwgj5 --namespace=value -- sh
 127.0.0.1:6379> get my-value
 "457"
 ```
+
+The API writes data to the redis cluster using the key `my-value`. We can see the data we POSTed to the API in the Redis cluster, so this shows that the two systems are working together!
+
+# Step 6: Add a PersistentVolume
+
+Remember how we lost data in the API when we restarted its deployment? Surprise, we still have that problem!
+
+To demonstrate, let's use `redis-cli` to show the value again.
+
+```shell
+$ kubectl exec -it redis-84d6945f5c-qwgj5  --namespace=value -- redis-cli get my-value 
+"457"
+```
+
+Right, so my-value has the value `"457"`. Now, let's restart the deployment.
+
+```shell
+$ kubectl rollout restart deployment redis --namespace=value                      
+deployment.apps/redis restarted
+```
+
+Remember, the restart creates a new pod, so we'll need to find the new pod's name.
+
+```shell
+$ kubectl get pods --namespace=value                                                 
+NAME                    READY   STATUS    RESTARTS   AGE
+api-6bc69489d-fjzbz     1/1     Running   0          11h
+redis-78bc567b9-9tvxx   1/1     Running   0          24s
+```
+
+And if we execute the same command against the new redis pod...uh, oops.
+
+```shell
+$ kubectl exec -it redis-78bc567b9-9tvxx --namespace=value -- redis-cli get my-value
+(nil)
+```
+
+What happened? The new pod has none of the data that got written to the old pod! Remember, **pods are ephemeral**. Just like with the API pod, any data on the pod gets lost when the pod shuts down. 
+
+In order to save data, we'll need a persistent volume and a persistent volume claim. Let's step forward in time again:
+
+```shell
+git checkout 3-persistent-volume-for-redis
+```
+
+First, check out the file `redis/pv.yml`. This file sets up a PersistentVolume in the cluster, in the form of a 500 MB file located in `/mnt/data` on the cluster. **Note there's no mention of namespace**. That's because the PersistentVolume belongs to the cluster.
+
+Let's apply it.
+
+```shell
+$ kubectl apply -f redis/pv.yml                                                           
+persistentvolume/redis-data created
+```
+
+Next, we'll create a PersistentVolumeClaim, which is essentially a "ticket" that a pod can use to get a PersistentVolume and mount. Check out the file `redis/pvc.yml`. Note that, unlike the PersistentVolume, the PersistentVolumeClaim **does** have a namespace attached. Additionally, there's nothing linking the PersistentVolumeClaim to the PersistentVolume--it's up to the cluster to find a PersistentVolume that's appropriate for the PersistentVolumeClaim.
+
+Let's apply this.
+
+```shell
+$ kubectl apply -f redis/pvc.yml
+persistentvolumeclaim/redis-pvc created
+```
+
+Now, let's take a look at the redis deployment. Under the `spec`, we now see a `volumes` section:
+
+```yml
+      volumes:
+        - name: redis-storage
+          persistentVolumeClaim:
+            claimName: redis-pvc
+```
+
+This defines a volume for the pod that gets backed by the PersistentVolumeClaim. Next, in the `volumeMounts:` section of the container, we mount the volume appropriately to the `/data/` directory within the container.
+
+```yml
+        volumeMounts:
+          - mountPath: "/data"
+            name: redis-storage
+```
+
+Let's apply these changes.
+
+```shell
+$ kubectl apply -f redis/deployment.yml 
+deployment.apps/redis configured
+```
+
+Now let's test the changes! Note that your pod names will be different from mine, use the following command to find your pod names:
+
+```shell
+$ kubectl get pods --namespace=value
+```
+
+First, let's touch a file in the pod, using the exec command:
+
+```shell
+$ kubectl exec -it redis-78bc567b9-9tvxx --namespace=value -- touch /data/my-file   
+$ kubectl exec -it redis-78bc567b9-9tvxx --namespace=value -- ls /data           
+my-file
+```
+
+Now, let's restart the deployment, to see if a new container has the same files.
+
+```shell
+$ kubectl rollout restart deployment redis --namespace=value
+deployment.apps/redis restarted
+```
+
+If we did things right, the new pod will still have the file we created, and it does!
+
+```shell
+$ kubectl exec -it redis-566c8cd794-j268v --namespace=value -- ls /data
+dump.rdb  my-file
+```
+
+Hold on though. There's still a problem here. To demonstrate, let's post to the API and restart the redis deployment.
+
+```shell
+$ curl -X POST localhost:31000/value -d 457
+$ kubectl rollout restart deployment redis --namespace=value
+```
+
+If we check the newly created redis pod, there's a problem: there's no data there!
+
+```shell
+$  kubectl exec redis-f86675ffd-2m7n5 --namespace=value -- redis-cli get my-value
+
+$
+```
+
+So, we've got a volume where the redis pod can persis data, but the redis software isn't making use of it yet. Hmm. What to do?
