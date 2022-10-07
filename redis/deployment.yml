@@ -16,9 +16,18 @@ spec:
         - name: redis-storage
           persistentVolumeClaim:
             claimName: redis-pvc
+        - name: config
+          configMap:
+            name: redis
+            items:
+              - key: redisConfig
+                path: redis.conf
       containers:
       - name: redis
         image: redis:7
+        command:
+          - "redis-server"
+          - "/redis-master/redis.conf"
         resources:
           limits:
             memory: "128Mi"
@@ -28,3 +37,5 @@ spec:
         volumeMounts:
           - mountPath: "/data"
             name: redis-storage
+          - mountPath: "/redis-master"
+            name: config
