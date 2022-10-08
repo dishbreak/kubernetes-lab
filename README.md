@@ -192,7 +192,7 @@ $ curl localhost:31000/value
 457
 ```
 
-Nice! We've got the same behavior that we saw locally, but inside our cluster. Now let's 
+Nice! We've got the same behavior that we saw locally, but inside our cluster.
 
 # Step 5: Add Redis backing
 
@@ -413,3 +413,106 @@ $
 ```
 
 So, we've got a volume where the redis pod can persis data, but the redis software isn't making use of it yet. Hmm. What to do?
+
+# Step 7: Configure Redis with a ConfigMap
+
+By default, redis isn't much different from our API--it stores values in memory. It _does_ have support for something called [Append-only File (AOF) mode](https://redis.io/docs/manual/persistence/#append-only-file). In short, this mode journals writes to the filesystem, which lets redis rebuild the database after a halt and restart.
+
+In order to turn on AOF mode, we need the following line in a redis.cfg file:
+
+```
+appendonly yes
+```
+
+So...how are we going to get this file into the filesystem of the container? We _could_ build a Docker container image that adds the config file to a `redis:7` container image, but that's got a number of drawbacks. We'd need to keep our homegrown container up to date and it's going to be hard to keep the redis system maintained. Additionaly, config changes will require us to publish and deploy new containers.
+
+Enter [ConfigMap](https://kubernetes.io/docs/concepts/configuration/configmap/)! From the Kubernetes docs (emphasis added):
+
+> A ConfigMap is an API object used to store non-confidential data in key-value pairs. Pods can consume ConfigMaps as environment variables, command-line arguments, or as **configuration files in a volume**.
+
+Managing configuration files in the container thru the kubernetes API sounds like _exactly_ what we need. Here's what our ConfigMap in `redis/configmap.yml` looks like:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis
+  namespace: value
+data:
+  redisConfig: |
+    appendonly yes
+```
+
+The pipe character (`|`) after the `redisConfig` key lets us create a multiline value. Let's apply it.
+
+```shell
+$ kubectl apply -f redis/configmap.yml 
+configmap/redis created
+```
+
+Now, we need to modify our deployment. `redis/deployment.yml` is up-to-date, so let's take a quick tour of all our changes.
+
+First, we've added the ConfigMap as a volume for the pod. This snippet creates a `config` volume, and writes the value attached to `redisConfig` into a file `redis.cfg` within the volume.
+
+```yaml
+      volumes:
+        ...
+        - name: config
+          configMap:
+            name: redis
+            items:
+              - key: redisConfig
+                path: redis.conf
+```
+
+Next, we mount the `config` volume in the `volumeMounts` section. This will make the config file available at `/redis-master/redis.conf`. 
+
+```yaml
+        volumeMounts:
+          ...
+          - mountPath: "/redis-master"
+            name: config
+```
+
+Finally we need to update the container's command to pass the config file path.
+
+```yaml
+      containers:
+      - name: redis
+        image: redis:7
+        command:
+          - "redis-server"
+          - "/redis-master/redis.conf"
+```
+
+We'll update the deployment.
+
+```shell
+$  kubectl apply -f redis/deployment.yml
+deployment.apps/redis configured
+```
+
+Now, let's try the same test again: post a value to the API.
+
+```shell
+$ curl -X POST localhost:31000/value -d 457
+```
+
+Next, look up the redis pod, and check the redis backend. Restart the deployment.
+
+```shell
+$ kubectl exec redis-566c8cd794-j268v --namespace=value -- redis-cli get my-value
+457
+$ kubectl rollout restart deployment redis --namespace=value
+deployment.apps/redis restarted
+```
+
+Look up the redis pod name post deployment and check the backend.
+```shell
+$ kubectl exec redis-78fbfdfc85-fgk4t --namespace=value -- redis-cli get my-value
+457
+```
+
+Excellent. Now the API _and_ the redis backend are able to tolerate pod restarts. This lets our system be more fault tolerant and enables us to deploy software without taking downtime. Booyah!
+
+
