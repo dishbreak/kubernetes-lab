@@ -6,8 +6,24 @@ A quick little proof of concept that lets you deploy a Redis-backed CRUD API on 
 
 ## Before You Begin
 
-Make sure you've downloaded and installed Docker Desktop and enabled Kubernetes. You can follow an official guide [here](https://docs.docker.com/desktop/kubernetes/).
+You'll need the `kubectl` command. This command will help us interact with out Kubernetes cluster. Install instructions are available [here](https://kubernetes.io/docs/tasks/tools/#kubectl).
 
+Make sure you've downloaded and installed Docker Desktop. **Don't enable Kubernetes -- we'll be using a different solution.** 
+
+Once you've got Docker set up, install Kubernetes in Docker (kind). You can find install instructions [here](https://kind.sigs.k8s.io/docs/user/quick-start/#installation)
+
+Once installed, you can use the kind command to initialize your very first Kubernetes cluster!
+
+```shell
+$ kind create cluster
+```
+
+Once it's set up, make sure your Kubernetes context is pointed at your Kind cluster. This makes sure everything we do gets aimed at your local cluster. You can check this using the `kubectl` command.
+
+```shell
+$ kubectl config current-context           
+kind-kind
+```
 The API in this lab is written in Go, but don't stress, you don't need it installed!
 
 **This is not a production ready system**. You _could_ deploy all this on GKE or EKS, but I wouldn't vouch for it. If it makes you money, do yourself a favor and read up on productionizing k8s before deploying app.
@@ -138,6 +154,22 @@ $ kubectl get deployments --namespace=value
 NAME   READY   UP-TO-DATE   AVAILABLE   AGE
 api    1/1     1            1           24m
 ```
+
+This is going to get tedious after awhile. We can modify our context so that we always use the same namespace. 
+
+```shell
+$ kubectl config set-context --namespace value --current
+Context "kind-kind" modified.
+```
+
+Now we can skip the namespace flag.
+
+```
+$ kubectl get deployments
+NAME   READY   UP-TO-DATE   AVAILABLE   AGE
+api    1/1     1            1           24m
+```
+
 
 Of course, your `AGE` value may differ, but there it is! One pod, ready and available for value-add goodness. But, um...how are we going to reach it?
 
@@ -516,3 +548,54 @@ $ kubectl exec redis-78fbfdfc85-fgk4t --namespace=value -- redis-cli get my-valu
 Excellent. Now the API _and_ the redis backend are able to tolerate pod restarts. This lets our system be more fault tolerant and enables us to deploy software without taking downtime. Booyah!
 
 
+# Step 8: Reverse Proxying via Ingress
+
+Right now, we're able to access or value service on port 31000 on the localhost of the machine. This is great and all, but what do we do when we have more than 1 API running? It'll be a pain in the neck to remember all the individual ports for each service, and we don't really have a microservice portal unless we can access all APIs from a single point of ingress.
+
+That's where [Ingress resources](https://kubernetes.io/docs/concepts/services-networking/ingress/) come in. From the Kubernetes docs:
+
+> Ingress exposes HTTP and HTTPS routes from outside the cluster to services within the cluster. Traffic routing is controlled by rules defined on the Ingress resource.
+
+Sounds like exactly what we need! In order to make use of Ingress resources, we need to deploy an [Ingress controller](https://kubernetes.io/docs/concepts/services-networking/ingress-controllers/). For our local cluster, we're going to use the [ingress-nginx](https://github.com/kubernetes/ingress-nginx) controller. 
+
+Follow the [Install guide](https://kubernetes.github.io/ingress-nginx/deploy/) to add the ignress-ngnix controller to your cluster. Then, step forward in time to our ingress config.
+
+```
+git checkout 5-ingress-setup
+```
+
+Take a look at `api/ingress.yml`. This file describes an Ingress resource with a single rule:
+
+```yml
+  - host: kubernetes.docker.internal
+    http:
+      paths:
+      - pathType: Prefix
+        path: "/value"
+        backend:
+          service:
+            name: api
+            port: 
+              name: traffic
+```
+
+Essentially, this role will configure routes with the prefix `/value` to forward to the `traffic` port on our API service. Note that we don't have to specify the port number here because we assigned the port the name `traffic` when we created the service object.
+
+Let's apply this ingress resource.
+
+```shell
+$ kubectl apply -f api/ingress.yml
+ingress.networking.k8s.io/api configured
+```
+
+And now, we should be able to interact with our API on the host `kubernetes.docker.internal`. 
+
+```shell
+$ curl kubernetes.docker.internal/value
+457
+$ curl -X POST kubernetes.docker.internal/value -d 585
+$ curl kubernetes.docker.internal/value               
+585
+```
+
+To really drive home the value of Ingress, let's add another service. Step forward in time again.
