@@ -6,7 +6,32 @@ A quick little proof of concept that lets you deploy a Redis-backed CRUD API on 
 
 ## Before You Begin
 
-Make sure you've downloaded and installed Docker Desktop and enabled Kubernetes. You can follow an official guide [here](https://docs.docker.com/desktop/kubernetes/).
+Make sure you've downloaded and installed Docker Desktop and Homebrew. Having an IDE with a Kubernetes plugin like VSCode can help, but it's not required. This guide assumes you're on macOS, you may have to adapt it for a Windows or Linux installation.
+
+First, install the `kind` package from Homebrew.
+
+
+
+`kubernetes-cli` package from Homebrew.
+
+```shell
+$ brew install kubernetes-cli
+```
+
+Once you've done this, you'll need to delete the `kubectl` installation that Docker Desktop put on your PATH. 
+
+```shell
+$ sudo rm $(which kubectl)
+```
+
+At the time of writing, `kubectl version` should respond like so.
+
+```shell
+$ kubectl version
+Client Version: v1.28.3
+Kustomize Version: v5.0.4-0.20230601165947-6ce0bf390ce3
+Server Version: v1.27.3
+```
 
 The API in this lab is written in Go, but don't stress, you don't need it installed!
 
