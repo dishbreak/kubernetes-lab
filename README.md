@@ -8,11 +8,14 @@ A quick little proof of concept that lets you deploy a Redis-backed CRUD API on 
 
 Make sure you've downloaded and installed Docker Desktop and Homebrew. Having an IDE with a Kubernetes plugin like VSCode can help, but it's not required. This guide assumes you're on macOS, you may have to adapt it for a Windows or Linux installation.
 
-First, install the `kind` package from Homebrew.
+First, install the `kind` package from Homebrew, then use it to create a cluster.
 
+```shell
+$ brew install kind
+$ kind create cluster
+```
 
-
-`kubernetes-cli` package from Homebrew.
+Next, install the `kubernetes-cli` package from Homebrew. This will set up the `kubectl` command, which we'll use throughout the lab to interact with our cluster.
 
 ```shell
 $ brew install kubernetes-cli
@@ -31,6 +34,13 @@ $ kubectl version
 Client Version: v1.28.3
 Kustomize Version: v5.0.4-0.20230601165947-6ce0bf390ce3
 Server Version: v1.27.3
+```
+
+Lastly, let's set the context. This will aim our `kubectl` command at our kind cluster.
+
+```shell
+$ kubectl config set-context kind-kind
+Context "kind-kind" modified.
 ```
 
 The API in this lab is written in Go, but don't stress, you don't need it installed!
@@ -103,7 +113,7 @@ $ docker run -P value-api:v1
 
 The `-P` flag publishes ports--that is, it automatically binds any ports named with the `EXPOSE` command within the Dockerfile to high-order ports on your machine. Let's figure out what port to use by running `docker ps` and checking the `PORTS` section.
 
-```
+```shell
 $ docker ps  
 CONTAINER ID   IMAGE              COMMAND   CREATED         STATUS         PORTS                     NAMES
 a8df1c2e7068   value-service:v1   "app"     2 minutes ago   Up 2 minutes   0.0.0.0:55001->8080/tcp   serene_lehmann
@@ -113,15 +123,22 @@ So, on my machine, the container bound Port 8080 in the container to to port 550
 
 Let's interact with this value service. In a separate terminal, let's post a value to the endpoint.
 
-```
+```shell
 $ curl -X POST localhost:55001/value -d 343
 ```
 
 Great. Now let's check to see if we can get that value back.
 
-```
+```shell
 $ curl localhost:55001/value       
 343
+```
+
+This container's looking good. Let's load the docker image into our kind cluster -- this will let us use it on the cluster.
+
+```shell
+$ kind load docker-image value-api:v1
+Image: "value-api:v1" with ID "sha256:e9b048efbd923e74c875c90a7e928d1d90b7616ee7c9226fab3153ca6915ec5f" not yet present on node "kind-control-plane", loading...
 ```
 
 Awesome! We're ready to deploy this container.
@@ -144,28 +161,58 @@ Take a look at `api/deployment.yml`. The YAML syntax is a little verbose, but th
 
 Alright, let's deploy this, uh, deployment. From the repo root:
 
-```
+```shell
 $ kubectl apply -f api/deployment.yml 
 deployment.apps/api created
 ```
 
 Now let's go find it!
 
-```
+```shell
 $ kubectl get deployments
 No resources found in default namespace.
 ```
 
 Uhhh...what? We just created it, right? Where is it? Remember that we created the deployment in our `value` namespace. In order to see it via `kubectl`, we need to pass the `--namespace` flag.
 
-```
+```shell
 $ kubectl get deployments --namespace=value
 NAME   READY   UP-TO-DATE   AVAILABLE   AGE
 api    1/1     1            1           24m
 ```
 
-Of course, your `AGE` value may differ, but there it is! One pod, ready and available for value-add goodness. But, um...how are we going to reach it?
+This is going to get old really fast. We can add the namespace to our context and let `kubectl` use it for subsequent commands.
 
+```shell
+$ kubectl config set-context kind-kind --namespace value
+```
+
+Now, running the command without the `--namespace` flag works!
+
+```shell
+$ kubectl get deployments
+NAME   READY   UP-TO-DATE   AVAILABLE   AGE
+api    1/1     1            1           24m
+```
+
+As a reminder, **deployments aren't pods -- they just specify how to create them**. We can use `kubectl` to find the running pods, too.
+
+```shell
+$ kubectl get pods
+NAME                   READY   STATUS    RESTARTS   AGE
+api-58776c686c-b2rr9   1/1     Running   0          73m
+```
+
+Of course, your `AGE` value may differ, but there it is! One pod, ready and available for value-add goodness. But, um...how are we going to reach it? We can make use of a debug container. Here we're using the `curlimages/curl:latest` container and the pod (`api-58776c686c-b2rr9` in this case). This will drop us into a shell in a container that's running in the pod.
+
+```shell
+$ kubectl debug --image curlimages/curl:latest -it api-58776c686c-b2rr9 -- sh
+Defaulting debug container name to debugger-d2tsj.
+If you don't see a command prompt, try pressing enter.
+~ $  
+```
+
+You should be able to use `curl` within this debug container much like you did while playing with the container image using `docker run`. Making requests against `localhost:8080` will hit our value API.
 
 # Step 4: Create a Service
 
