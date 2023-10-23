@@ -53,8 +53,8 @@ _You've been tasked with adding value to your enterprise. So, naturally, you'll 
 
 To begin, let's checkout code at the start.
 
-```
-git checkout 1-my-first-k8s-svc
+```shell
+$ git checkout steps/1-my-first-k8s-service
 ```
 
 We're going to create a namespace for our Value service. This will let us keep all our pods and services nicely organized. We've got a namespace definition ready to go, let's take a look!
