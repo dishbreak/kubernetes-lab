@@ -295,6 +295,40 @@ $ curl localhost:31000/value
 
 Nice! We've got the same behavior that we saw locally, but inside our cluster.
 
+## An Aside on Services
+
+In order to be able to access our service from our local environment, we need to make use of the NodePort service and declare the port in our Kind cluster. The NodePort service type binds the endpoint to a port on the Kubernetes node running the docker containers for the pod, and the kind config binds the port from the node to a port on our localhost interface.
+
+The first hop is in the service definition:
+
+```yaml
+  ports:
+  - port: 8080
+    nodePort: 31000
+    name: traffic
+```
+
+And the second hop is in the kind config:
+
+```yaml
+  extraPortMappings:
+  - containerPort: 31000
+    hostPort: 31000
+    listenAddress: "0.0.0.0"
+    protocol: tcp
+```
+
+And sure enough, if we check via `docker ps`, we can see the port binding.
+
+```shell
+$ docker ps
+CONTAINER ID   IMAGE                  COMMAND                  CREATED          STATUS          PORTS                                                 NAMES
+2404d2fa1f79   kindest/node:v1.27.3   "/usr/local/bin/entr…"   50 minutes ago   Up 50 minutes   0.0.0.0:31000->31000/tcp, 127.0.0.1:55356->6443/tcp   kind-control-plane
+57b2847ece36   kindest/node:v1.27.3   "/usr/local/bin/entr…"   50 minutes ago   Up 50 minutes                                                         kind-worker
+```
+
+This is how we're able to visit our value API on localhost port 31000. That port gets mapped to the kind cluster node, which in turn maps it to the value API via the NodePort service. Phew!
+
 # Step 5: Add Redis backing
 
 There's a small problem with our service. To demonstrate, let's use the `rollout` command.
