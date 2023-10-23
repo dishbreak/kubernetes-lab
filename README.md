@@ -394,21 +394,21 @@ Remember how we lost data in the API when we restarted its deployment? Surprise,
 To demonstrate, let's use `redis-cli` to show the value again.
 
 ```shell
-$ kubectl exec -it redis-84d6945f5c-qwgj5  --namespace=value -- redis-cli get my-value 
+$ kubectl exec -it redis-84d6945f5c-qwgj5  -- redis-cli get my-value 
 "457"
 ```
 
 Right, so my-value has the value `"457"`. Now, let's restart the deployment.
 
 ```shell
-$ kubectl rollout restart deployment redis --namespace=value                      
+$ kubectl rollout restart deployment redis                      
 deployment.apps/redis restarted
 ```
 
 Remember, the restart creates a new pod, so we'll need to find the new pod's name.
 
 ```shell
-$ kubectl get pods --namespace=value                                                 
+$ kubectl get pods                                                 
 NAME                    READY   STATUS    RESTARTS   AGE
 api-6bc69489d-fjzbz     1/1     Running   0          11h
 redis-78bc567b9-9tvxx   1/1     Running   0          24s
@@ -417,7 +417,7 @@ redis-78bc567b9-9tvxx   1/1     Running   0          24s
 And if we execute the same command against the new redis pod...uh, oops.
 
 ```shell
-$ kubectl exec -it redis-78bc567b9-9tvxx --namespace=value -- redis-cli get my-value
+$ kubectl exec -it redis-78bc567b9-9tvxx -- redis-cli get my-value
 (nil)
 ```
 
@@ -426,7 +426,7 @@ What happened? The new pod has none of the data that got written to the old pod!
 In order to save data, we'll need a persistent volume and a persistent volume claim. Let's step forward in time again:
 
 ```shell
-git checkout 3-persistent-volume-for-redis
+git checkout steps/3-persistent-volume-for-redis
 ```
 
 First, check out the file `redis/pv.yml`. This file sets up a PersistentVolume in the cluster, in the form of a 500 MB file located in `/mnt/data` on the cluster. **Note there's no mention of namespace**. That's because the PersistentVolume belongs to the cluster.
@@ -514,7 +514,7 @@ $  kubectl exec redis-f86675ffd-2m7n5 --namespace=value -- redis-cli get my-valu
 $
 ```
 
-So, we've got a volume where the redis pod can persis data, but the redis software isn't making use of it yet. Hmm. What to do?
+So, we've got a volume where the redis pod can persist data, but the redis software isn't making use of it yet. Hmm. What to do?
 
 # Step 7: Configure Redis with a ConfigMap
 
@@ -532,7 +532,13 @@ Enter [ConfigMap](https://kubernetes.io/docs/concepts/configuration/configmap/)!
 
 > A ConfigMap is an API object used to store non-confidential data in key-value pairs. Pods can consume ConfigMaps as environment variables, command-line arguments, or as **configuration files in a volume**.
 
-Managing configuration files in the container thru the kubernetes API sounds like _exactly_ what we need. Here's what our ConfigMap in `redis/configmap.yml` looks like:
+Managing configuration files in the container thru the kubernetes API sounds like _exactly_ what we need. Step forward in time, and we'll look at a ConfigMap in action.
+
+```shell
+$ git checkout steps/4-redis-appendonly-config
+```
+
+Here's what our ConfigMap in `redis/configmap.yml` looks like:
 
 ```yaml
 apiVersion: v1
@@ -603,15 +609,15 @@ $ curl -X POST localhost:31000/value -d 457
 Next, look up the redis pod, and check the redis backend. Restart the deployment.
 
 ```shell
-$ kubectl exec redis-566c8cd794-j268v --namespace=value -- redis-cli get my-value
+$ kubectl exec redis-566c8cd794-j268v -- redis-cli get my-value
 457
-$ kubectl rollout restart deployment redis --namespace=value
+$ kubectl rollout restart deployment redis
 deployment.apps/redis restarted
 ```
 
 Look up the redis pod name post deployment and check the backend.
 ```shell
-$ kubectl exec redis-78fbfdfc85-fgk4t --namespace=value -- redis-cli get my-value
+$ kubectl exec redis-78fbfdfc85-fgk4t -- redis-cli get my-value
 457
 ```
 
