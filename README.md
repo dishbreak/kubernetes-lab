@@ -399,7 +399,8 @@ $ curl localhost:31000/value
 457
 ```
 
-(Note that if you attempt to GET on `/value` before POSTing to the endpoint, **the API will crash**. Like I said at the beginning, this isn't meant for production.)
+> [!WARNING]
+> If you attempt to GET on `/value` before POSTing to the endpoint, **the API will crash**. Like I said at the beginning, this isn't meant for production.
 
 Woo! The value persisted thru the restart. Awesome.
 
