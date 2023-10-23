@@ -6,7 +6,42 @@ A quick little proof of concept that lets you deploy a Redis-backed CRUD API on 
 
 ## Before You Begin
 
-You'll need the `kubectl` command. This command will help us interact with out Kubernetes cluster. Install instructions are available [here](https://kubernetes.io/docs/tasks/tools/#kubectl).
+Make sure you've downloaded and installed Docker Desktop and Homebrew. Having an IDE with a Kubernetes plugin like VSCode can help, but it's not required. This guide assumes you're on macOS, you may have to adapt it for a Windows or Linux installation.
+
+First, install the `kind` package from Homebrew, then use it to create a cluster.
+
+```shell
+$ brew install kind
+$ kind create cluster
+```
+
+Next, install the `kubernetes-cli` package from Homebrew. This will set up the `kubectl` command, which we'll use throughout the lab to interact with our cluster.
+
+```shell
+$ brew install kubernetes-cli
+```
+
+Once you've done this, you'll need to delete the `kubectl` installation that Docker Desktop put on your PATH. 
+
+```shell
+$ sudo rm $(which kubectl)
+```
+
+At the time of writing, `kubectl version` should respond like so.
+
+```shell
+$ kubectl version
+Client Version: v1.28.3
+Kustomize Version: v5.0.4-0.20230601165947-6ce0bf390ce3
+Server Version: v1.27.3
+```
+
+Lastly, let's set the context. This will aim our `kubectl` command at our kind cluster.
+
+```shell
+$ kubectl config set-context kind-kind
+Context "kind-kind" modified.
+```
 
 Make sure you've downloaded and installed Docker Desktop. **Don't enable Kubernetes -- we'll be using a different solution.** 
 
@@ -34,8 +69,8 @@ _You've been tasked with adding value to your enterprise. So, naturally, you'll 
 
 To begin, let's checkout code at the start.
 
-```
-git checkout 1-my-first-k8s-svc
+```shell
+$ git checkout steps/1-my-first-k8s-service
 ```
 
 We're going to create a namespace for our Value service. This will let us keep all our pods and services nicely organized. We've got a namespace definition ready to go, let's take a look!
@@ -94,7 +129,7 @@ $ docker run -P value-api:v1
 
 The `-P` flag publishes ports--that is, it automatically binds any ports named with the `EXPOSE` command within the Dockerfile to high-order ports on your machine. Let's figure out what port to use by running `docker ps` and checking the `PORTS` section.
 
-```
+```shell
 $ docker ps  
 CONTAINER ID   IMAGE              COMMAND   CREATED         STATUS         PORTS                     NAMES
 a8df1c2e7068   value-service:v1   "app"     2 minutes ago   Up 2 minutes   0.0.0.0:55001->8080/tcp   serene_lehmann
@@ -104,15 +139,22 @@ So, on my machine, the container bound Port 8080 in the container to to port 550
 
 Let's interact with this value service. In a separate terminal, let's post a value to the endpoint.
 
-```
+```shell
 $ curl -X POST localhost:55001/value -d 343
 ```
 
 Great. Now let's check to see if we can get that value back.
 
-```
+```shell
 $ curl localhost:55001/value       
 343
+```
+
+This container's looking good. Let's load the docker image into our kind cluster -- this will let us use it on the cluster.
+
+```shell
+$ kind load docker-image value-api:v1
+Image: "value-api:v1" with ID "sha256:e9b048efbd923e74c875c90a7e928d1d90b7616ee7c9226fab3153ca6915ec5f" not yet present on node "kind-control-plane", loading...
 ```
 
 Awesome! We're ready to deploy this container.
@@ -135,44 +177,58 @@ Take a look at `api/deployment.yml`. The YAML syntax is a little verbose, but th
 
 Alright, let's deploy this, uh, deployment. From the repo root:
 
-```
+```shell
 $ kubectl apply -f api/deployment.yml 
 deployment.apps/api created
 ```
 
 Now let's go find it!
 
-```
+```shell
 $ kubectl get deployments
 No resources found in default namespace.
 ```
 
 Uhhh...what? We just created it, right? Where is it? Remember that we created the deployment in our `value` namespace. In order to see it via `kubectl`, we need to pass the `--namespace` flag.
 
-```
+```shell
 $ kubectl get deployments --namespace=value
 NAME   READY   UP-TO-DATE   AVAILABLE   AGE
 api    1/1     1            1           24m
 ```
 
-This is going to get tedious after awhile. We can modify our context so that we always use the same namespace. 
+This is going to get old really fast. We can add the namespace to our context and let `kubectl` use it for subsequent commands.
 
 ```shell
-$ kubectl config set-context --namespace value --current
-Context "kind-kind" modified.
+$ kubectl config set-context kind-kind --namespace value
 ```
 
-Now we can skip the namespace flag.
+Now, running the command without the `--namespace` flag works!
 
-```
+```shell
 $ kubectl get deployments
 NAME   READY   UP-TO-DATE   AVAILABLE   AGE
 api    1/1     1            1           24m
 ```
 
+As a reminder, **deployments aren't pods -- they just specify how to create them**. We can use `kubectl` to find the running pods, too.
 
-Of course, your `AGE` value may differ, but there it is! One pod, ready and available for value-add goodness. But, um...how are we going to reach it?
+```shell
+$ kubectl get pods
+NAME                   READY   STATUS    RESTARTS   AGE
+api-58776c686c-b2rr9   1/1     Running   0          73m
+```
 
+Of course, your `AGE` value may differ, but there it is! One pod, ready and available for value-add goodness. But, um...how are we going to reach it? We can make use of a debug container. Here we're using the `curlimages/curl:latest` container and the pod (`api-58776c686c-b2rr9` in this case). This will drop us into a shell in a container that's running in the pod.
+
+```shell
+$ kubectl debug --image curlimages/curl:latest -it api-58776c686c-b2rr9 -- sh
+Defaulting debug container name to debugger-d2tsj.
+If you don't see a command prompt, try pressing enter.
+~ $  
+```
+
+You should be able to use `curl` within this debug container much like you did while playing with the container image using `docker run`. Making requests against `localhost:8080` will hit our value API.
 
 # Step 4: Create a Service
 
@@ -189,7 +245,36 @@ Specifically, we'll use a service to make our API reachable outside the cluster.
 
 The selector is crucial here. It lets us make the pods that our deployment creates turn into endpoints for our service.
 
-Let's deploy it, and then describe the service.
+Because we're using `kind`, we'll need to add a port to our cluster. We'll take a closer look at what's in this file in a second, for now let's delete the cluster and re-create it using the config file `kind-cluster.yml` at the root of the repo.
+
+```shell
+$ kind delete cluster
+$ kind create cluster --config kind-cluster.yml
+```
+
+For the sake of completeness, update your context to point at the kind cluster.
+
+```shell
+$ kubectl config set-context kind-kind
+```
+
+You'll need to reload the container image, recreate the namespace, and the deployment.
+
+```shell
+$ kind load docker-image value-api:v1
+$ kubectl apply -f namespace.yml
+$ kubectl apply -f api/deployment.yml
+```
+
+For the sake of ease, let's add the namespace to our context.
+
+```shell
+$ kubectl config set-context kind-kind --namespace=value
+```
+
+Note how quickly we were back where we started! That's a cool thing about Kubernetes--the api works great with files, and keeping yml files handy lets us quickly rebuild our system from scratch.
+
+Let's deploy and then describe the service.
 
 ```shell
 $ kubectl apply -f api/service.yml  
@@ -226,6 +311,40 @@ $ curl localhost:31000/value
 
 Nice! We've got the same behavior that we saw locally, but inside our cluster.
 
+## An Aside on Services
+
+In order to be able to access our service from our local environment, we need to make use of the NodePort service and declare the port in our Kind cluster. The NodePort service type binds the endpoint to a port on the Kubernetes node running the docker containers for the pod, and the kind config binds the port from the node to a port on our localhost interface.
+
+The first hop is in the service definition:
+
+```yaml
+  ports:
+  - port: 8080
+    nodePort: 31000
+    name: traffic
+```
+
+And the second hop is in the kind config:
+
+```yaml
+  extraPortMappings:
+  - containerPort: 31000
+    hostPort: 31000
+    listenAddress: "0.0.0.0"
+    protocol: tcp
+```
+
+And sure enough, if we check via `docker ps`, we can see the port binding.
+
+```shell
+$ docker ps
+CONTAINER ID   IMAGE                  COMMAND                  CREATED          STATUS          PORTS                                                 NAMES
+2404d2fa1f79   kindest/node:v1.27.3   "/usr/local/bin/entr…"   50 minutes ago   Up 50 minutes   0.0.0.0:31000->31000/tcp, 127.0.0.1:55356->6443/tcp   kind-control-plane
+57b2847ece36   kindest/node:v1.27.3   "/usr/local/bin/entr…"   50 minutes ago   Up 50 minutes                                                         kind-worker
+```
+
+This is how we're able to visit our value API on localhost port 31000. That port gets mapped to the kind cluster node, which in turn maps it to the value API via the NodePort service. Phew!
+
 # Step 5: Add Redis backing
 
 There's a small problem with our service. To demonstrate, let's use the `rollout` command.
@@ -247,7 +366,7 @@ Hm. The value we POSTed back in Step 4 is gone! That's because the value lived i
 Let's step forward in time, and deploy a Redis service that will handle persisting data for us.
 
 ```shell
-$ git checkout 2-using-redis-backend
+$ git checkout steps/2-using-redis-backend
 ```
 
 Your repo now has a `redis/` directory. This directory has YAML files but no source code, because it's relying on the public redis docker image. Take a look at the files, and then apply them to the kubernetes cluster. 
@@ -258,10 +377,11 @@ deployment.apps/redis created
 service/redis created
 ```
 
-Your API service got an upgrade, too! It now can store the value in Redis instead of keeping it memory. Check out `api/controller/value.go` to see the details on that. In the `api/` directory, run `docker build` to create a new container image.
+Your API service got an upgrade, too! It now can store the value in Redis instead of keeping it memory. Check out `api/controller/value.go` to see the details on that. In the `api/` directory, run `docker build` to create a new container image. Remember to load it into your kind cluster once you're done. 
 
 ```shell
 $ docker build -t value-api:v2 .
+$ kind load docker-image value-api:v2
 ```
 
 This build should go much faster than the first one, since most of the image layers are cached.
@@ -288,19 +408,22 @@ $ curl -X POST localhost:31000/value -d 457
 
 $ curl localhost:31000/value               
 457                                                                                                                                                                                             
-$ kubectl rollout restart deployment api --namespace=value
+$ kubectl rollout restart deployment api
 deployment.apps/api restarted
 
 $ curl localhost:31000/value                              
 457
 ```
 
+> [!WARNING]
+> If you attempt to GET on `/value` before POSTing to the endpoint, **the API will crash**. Like I said at the beginning, this isn't meant for production.
+
 Woo! The value persisted thru the restart. Awesome.
 
 For extra fun, let's run some commands inside the redis cluster and see if we have the data there. First, let's find the pod running redis.
 
 ```shell
-$ kubectl get pods --namespace=value
+$ kubectl get pods
 NAME                     READY   STATUS    RESTARTS   AGE
 api-6bc69489d-fjzbz      1/1     Running   0          3m28s
 redis-84d6945f5c-qwgj5   1/1     Running   0          14m
@@ -309,7 +432,7 @@ redis-84d6945f5c-qwgj5   1/1     Running   0          14m
 Now I'll use `exec` to drop into an interactive `redis-cli` session in the redis pod.
 
 ```shell
-$ kubectl exec -it redis-84d6945f5c-qwgj5 --namespace=value -- sh
+$ kubectl exec -it redis-84d6945f5c-qwgj5 -- sh
 # redis-cli
 127.0.0.1:6379> get my-value
 "457"
@@ -324,21 +447,21 @@ Remember how we lost data in the API when we restarted its deployment? Surprise,
 To demonstrate, let's use `redis-cli` to show the value again.
 
 ```shell
-$ kubectl exec -it redis-84d6945f5c-qwgj5  --namespace=value -- redis-cli get my-value 
+$ kubectl exec -it redis-84d6945f5c-qwgj5  -- redis-cli get my-value 
 "457"
 ```
 
 Right, so my-value has the value `"457"`. Now, let's restart the deployment.
 
 ```shell
-$ kubectl rollout restart deployment redis --namespace=value                      
+$ kubectl rollout restart deployment redis                      
 deployment.apps/redis restarted
 ```
 
 Remember, the restart creates a new pod, so we'll need to find the new pod's name.
 
 ```shell
-$ kubectl get pods --namespace=value                                                 
+$ kubectl get pods                                                 
 NAME                    READY   STATUS    RESTARTS   AGE
 api-6bc69489d-fjzbz     1/1     Running   0          11h
 redis-78bc567b9-9tvxx   1/1     Running   0          24s
@@ -347,7 +470,7 @@ redis-78bc567b9-9tvxx   1/1     Running   0          24s
 And if we execute the same command against the new redis pod...uh, oops.
 
 ```shell
-$ kubectl exec -it redis-78bc567b9-9tvxx --namespace=value -- redis-cli get my-value
+$ kubectl exec -it redis-78bc567b9-9tvxx -- redis-cli get my-value
 (nil)
 ```
 
@@ -356,7 +479,7 @@ What happened? The new pod has none of the data that got written to the old pod!
 In order to save data, we'll need a persistent volume and a persistent volume claim. Let's step forward in time again:
 
 ```shell
-git checkout 3-persistent-volume-for-redis
+git checkout steps/3-persistent-volume-for-redis
 ```
 
 First, check out the file `redis/pv.yml`. This file sets up a PersistentVolume in the cluster, in the form of a 500 MB file located in `/mnt/data` on the cluster. **Note there's no mention of namespace**. That's because the PersistentVolume belongs to the cluster.
@@ -444,7 +567,7 @@ $  kubectl exec redis-f86675ffd-2m7n5 --namespace=value -- redis-cli get my-valu
 $
 ```
 
-So, we've got a volume where the redis pod can persis data, but the redis software isn't making use of it yet. Hmm. What to do?
+So, we've got a volume where the redis pod can persist data, but the redis software isn't making use of it yet. Hmm. What to do?
 
 # Step 7: Configure Redis with a ConfigMap
 
@@ -462,7 +585,13 @@ Enter [ConfigMap](https://kubernetes.io/docs/concepts/configuration/configmap/)!
 
 > A ConfigMap is an API object used to store non-confidential data in key-value pairs. Pods can consume ConfigMaps as environment variables, command-line arguments, or as **configuration files in a volume**.
 
-Managing configuration files in the container thru the kubernetes API sounds like _exactly_ what we need. Here's what our ConfigMap in `redis/configmap.yml` looks like:
+Managing configuration files in the container thru the kubernetes API sounds like _exactly_ what we need. Step forward in time, and we'll look at a ConfigMap in action.
+
+```shell
+$ git checkout steps/4-redis-appendonly-config
+```
+
+Here's what our ConfigMap in `redis/configmap.yml` looks like:
 
 ```yaml
 apiVersion: v1
@@ -533,15 +662,15 @@ $ curl -X POST localhost:31000/value -d 457
 Next, look up the redis pod, and check the redis backend. Restart the deployment.
 
 ```shell
-$ kubectl exec redis-566c8cd794-j268v --namespace=value -- redis-cli get my-value
+$ kubectl exec redis-566c8cd794-j268v -- redis-cli get my-value
 457
-$ kubectl rollout restart deployment redis --namespace=value
+$ kubectl rollout restart deployment redis
 deployment.apps/redis restarted
 ```
 
 Look up the redis pod name post deployment and check the backend.
 ```shell
-$ kubectl exec redis-78fbfdfc85-fgk4t --namespace=value -- redis-cli get my-value
+$ kubectl exec redis-78fbfdfc85-fgk4t -- redis-cli get my-value
 457
 ```
 
