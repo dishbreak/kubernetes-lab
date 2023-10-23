@@ -229,7 +229,36 @@ Specifically, we'll use a service to make our API reachable outside the cluster.
 
 The selector is crucial here. It lets us make the pods that our deployment creates turn into endpoints for our service.
 
-Let's deploy it, and then describe the service.
+Because we're using `kind`, we'll need to add a port to our cluster. We'll take a closer look at what's in this file in a second, for now let's delete the cluster and re-create it using the config file `kind-cluster.yml` at the root of the repo.
+
+```shell
+$ kind delete cluster
+$ kind create cluster --config kind-cluster.yml
+```
+
+For the sake of completeness, update your context to point at the kind cluster.
+
+```shell
+$ kubectl config set-context kind-kind
+```
+
+You'll need to reload the container image, recreate the namespace, and the deployment.
+
+```shell
+$ kind load docker-image value-api:v1
+$ kubectl apply -f namespace.yml
+$ kubectl apply -f api/deployment.yml
+```
+
+For the sake of ease, let's add the namespace to our context.
+
+```shell
+$ kubectl config set-context kind-kind --namespace=value
+```
+
+Note how quickly we were back where we started! That's a cool thing about Kubernetes--the api works great with files, and keeping yml files handy lets us quickly rebuild our system from scratch.
+
+Let's deploy and then describe the service.
 
 ```shell
 $ kubectl apply -f api/service.yml  
@@ -287,7 +316,7 @@ Hm. The value we POSTed back in Step 4 is gone! That's because the value lived i
 Let's step forward in time, and deploy a Redis service that will handle persisting data for us.
 
 ```shell
-$ git checkout 2-using-redis-backend
+$ git checkout steps/2-using-redis-backend
 ```
 
 Your repo now has a `redis/` directory. This directory has YAML files but no source code, because it's relying on the public redis docker image. Take a look at the files, and then apply them to the kubernetes cluster. 
@@ -298,10 +327,11 @@ deployment.apps/redis created
 service/redis created
 ```
 
-Your API service got an upgrade, too! It now can store the value in Redis instead of keeping it memory. Check out `api/controller/value.go` to see the details on that. In the `api/` directory, run `docker build` to create a new container image.
+Your API service got an upgrade, too! It now can store the value in Redis instead of keeping it memory. Check out `api/controller/value.go` to see the details on that. In the `api/` directory, run `docker build` to create a new container image. Remember to load it into your kind cluster once you're done. 
 
 ```shell
 $ docker build -t value-api:v2 .
+$ kind load docker-image value-api:v2
 ```
 
 This build should go much faster than the first one, since most of the image layers are cached.
@@ -328,7 +358,7 @@ $ curl -X POST localhost:31000/value -d 457
 
 $ curl localhost:31000/value               
 457                                                                                                                                                                                             
-$ kubectl rollout restart deployment api --namespace=value
+$ kubectl rollout restart deployment api
 deployment.apps/api restarted
 
 $ curl localhost:31000/value                              
@@ -340,7 +370,7 @@ Woo! The value persisted thru the restart. Awesome.
 For extra fun, let's run some commands inside the redis cluster and see if we have the data there. First, let's find the pod running redis.
 
 ```shell
-$ kubectl get pods --namespace=value
+$ kubectl get pods
 NAME                     READY   STATUS    RESTARTS   AGE
 api-6bc69489d-fjzbz      1/1     Running   0          3m28s
 redis-84d6945f5c-qwgj5   1/1     Running   0          14m
@@ -349,7 +379,7 @@ redis-84d6945f5c-qwgj5   1/1     Running   0          14m
 Now I'll use `exec` to drop into an interactive `redis-cli` session in the redis pod.
 
 ```shell
-$ kubectl exec -it redis-84d6945f5c-qwgj5 --namespace=value -- sh
+$ kubectl exec -it redis-84d6945f5c-qwgj5 -- sh
 # redis-cli
 127.0.0.1:6379> get my-value
 "457"
